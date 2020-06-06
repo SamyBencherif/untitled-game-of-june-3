@@ -74,6 +74,158 @@ local game = {
 -----------------------------    UTILITY     -----------------------------  
 -------------------------------            -------------------------------  
 
+function castLaser(sx,sy,dx,dy)
+    -- simulated particle to figure out laser segment
+    local simParticle = {
+        x = sx + dx;
+        y = sy + dy;
+    }
+
+    -- move particle forward until it hits something
+    -- (arbitrary 300px limit)
+    for i=1,300 do
+        simParticle.x = simParticle.x + dx
+        simParticle.y = simParticle.y + dy
+
+        if getObjAtPoint(simParticle) then
+            break
+        end
+    end
+
+    renderLaserSeg(
+        sx + dx,
+        sy + dy,
+        simParticle.x,
+        simParticle.y
+    )
+end
+
+function getPlacementInfo(imgData, x, y)
+    local placement_configs = {
+        floor = {
+           rotation = 0;
+           x_offset = 0;
+           y_offset = 0;
+           rect_transform = function(x,y,w,h)
+               return {x=x; y=y; w=w; h=h}
+           end;
+           beam_o = {x=5; y=3};
+           beam_v = {x=0; y=-1};
+        },
+        lwall = {
+           rotation = math.pi/2;
+           x_offset = 11;
+           y_offset = 0;
+           rect_transform = function(x,y,w,h)
+               return {x=11-y; y=x; w=h; h=w}
+           end;
+           beam_o = {x=7; y=5};
+           beam_v = {x=1; y=0};
+        },
+        rwall = {
+           rotation = -math.pi/2;
+           x_offset = 0;
+           y_offset = 11;
+           rect_transform = function(x,y,w,h)
+               return {x=y; y=x; w=h; h=w}
+           end;
+           beam_o = {x=3; y=5};
+           beam_v = {x=-1; y=0};
+        },
+        ceil = {
+           rotation = math.pi;
+           x_offset = 11;
+           y_offset = 11;
+           rect_transform = function(x,y,w,h)
+               return {x=x; y=11-y; w=w; h=h}
+           end;
+           beam_o = {x=5; y=7};
+           beam_v = {x=0; y=1};
+        },
+
+    }
+
+    -- poll surrounding blocks to help determine placement
+
+    local neighborhood = 0
+
+    -- block to the right 1000 8
+    local r,g,b = imgData:getPixel(x+1, y)
+    if level_item(r, g, b, "block") then
+        neighborhood = neighborhood + 1
+    end
+    neighborhood = neighborhood * 2 
+
+    -- block to the left 0100 4
+    local r,g,b = imgData:getPixel(x-1, y)
+    if level_item(r, g, b, "block") then
+        neighborhood = neighborhood + 1
+    end
+    neighborhood = neighborhood * 2
+
+    -- block above 0010 2
+    local r,g,b = imgData:getPixel(x, y-1)
+    if level_item(r, g, b, "block") then
+        neighborhood = neighborhood + 1
+    end
+    neighborhood = neighborhood * 2
+
+    -- block below 0001 1
+    local r,g,b = imgData:getPixel(x, y+1)
+    if level_item(r, g, b, "block") then
+        neighborhood = neighborhood + 1
+    end
+
+    -- now choose a specific placement configuration
+    local pc
+    local linker_code
+
+    if ( neighborhood == 1 or neighborhood == 13 ) then 
+
+        pc = placement_configs.floor
+
+        -- save linker code
+        local r,g,b = imgData:getPixel(x, y-1)
+        linker_code = r*256*256 + g*256 + b
+
+    elseif ( neighborhood == 2 or neighborhood == 14 ) then
+
+        pc = placement_configs.ceil
+
+        -- save linker code
+        local r,g,b = imgData:getPixel(x, y+1)
+        linker_code = r*256*256 + g*256 + b
+
+    elseif ( neighborhood == 4 or neighborhood == 7 ) then
+
+        pc = placement_configs.lwall
+
+        -- save linker code
+        local r,g,b = imgData:getPixel(x+1, y)
+        linker_code = r*256*256 + g*256 + b
+
+    elseif ( neighborhood == 8 or neighborhood == 11 ) then
+
+        pc = placement_configs.rwall
+
+        -- save linker code
+        local r,g,b = imgData:getPixel(x-1, y)
+        linker_code = r*256*256 + g*256 + b
+
+    else
+
+        pc = placement_configs.floor
+
+        -- save linker code
+        local r,g,b = imgData:getPixel(x, y-1)
+        linker_code = r*256*256 + g*256 + b
+
+        print("Error: Invalid entity at ("..x..", "..y.."). Unable to resolve placement.")
+    end
+
+    return {pc = pc; linker_code = linker_code}
+end
+
 function control_point(x, y, visual)
 
     -- visual control point override
@@ -166,19 +318,9 @@ function renderFixtures(b)
 end
 
 -- renders laser path
-function renderLaser(path)
+function renderLaserSeg(x1, y1, x2, y2)
     love.graphics.setColor(0,0,0)
-
-    if #path < 2 then
-        return
-    end
-
-    love.graphics.line( path[1].x, path[1].y, path[2].x, path[2].y )
-    -- for i=0,100 do
-    --     f = i/100
-    --     love.graphics.rectangle( "fill", path[1].x + f*(path[2].x-path[1].x), path[1].y + f*(path[2].y-path[1].y), 1, 1)
-    -- end
-
+    love.graphics.line(x1, y1, x2, y2)
     love.graphics.setColor(1,1,1)
 end
 
@@ -213,6 +355,7 @@ function level_item(r, g, b, name)
     if r == 204 and g == 154 and b == 45 and name == "button" then return true end
     if r == 141 and g == 40 and b == 40 and name == "ulaser" then return true end
     if r == 233 and g == 34 and b == 75 and name == "ilaser" then return true end
+    if r == 101 and g == 51 and b == 16 and name == "catcher" then return true end
     if r == 21 and g == 127 and b == 49 and name == "door" then return true end
 
     if r == 255 and g == 255 and b == 255 and name == "empty" then return true end
@@ -779,128 +922,10 @@ function game.loadLevel(lvl)
                 --         
                 local initiated = level_item(r, g, b, "ilaser")
 
-                local placement_configs = {
-                    floor = {
-                       rotation = 0;
-                       x_offset = 0;
-                       y_offset = 0;
-                       rect_transform = function(x,y,w,h)
-                           return {x=x; y=y; w=w; h=h}
-                       end;
-                       beam_o = {x=5; y=3};
-                       beam_v = {x=0; y=-1};
-                    },
-                    lwall = {
-                       rotation = math.pi/2;
-                       x_offset = 11;
-                       y_offset = 0;
-                       rect_transform = function(x,y,w,h)
-                           return {x=11-y; y=x; w=h; h=w}
-                       end;
-                       beam_o = {x=7; y=5};
-                       beam_v = {x=1; y=0};
-                    },
-                    rwall = {
-                       rotation = -math.pi/2;
-                       x_offset = 0;
-                       y_offset = 11;
-                       rect_transform = function(x,y,w,h)
-                           return {x=y; y=x; w=h; h=w}
-                       end;
-                       beam_o = {x=3; y=5};
-                       beam_v = {x=-1; y=0};
-                    },
-                    ceil = {
-                       rotation = math.pi;
-                       x_offset = 11;
-                       y_offset = 11;
-                       rect_transform = function(x,y,w,h)
-                           return {x=x; y=11-y; w=w; h=h}
-                       end;
-                       beam_o = {x=5; y=7};
-                       beam_v = {x=0; y=1};
-                    },
-
-                }
-
-                -- poll surrounding blocks to help determine placement
-
-                local neighborhood = 0
-
-                -- block to the right 1000 8
-                local r,g,b = imgData:getPixel(x+1, y)
-                if level_item(r, g, b, "block") then
-                    neighborhood = neighborhood + 1
-                end
-                neighborhood = neighborhood * 2 
-
-                -- block to the left 0100 4
-                local r,g,b = imgData:getPixel(x-1, y)
-                if level_item(r, g, b, "block") then
-                    neighborhood = neighborhood + 1
-                end
-                neighborhood = neighborhood * 2
-
-                -- block above 0010 2
-                local r,g,b = imgData:getPixel(x, y-1)
-                if level_item(r, g, b, "block") then
-                    neighborhood = neighborhood + 1
-                end
-                neighborhood = neighborhood * 2
-
-                -- block below 0001 1
-                local r,g,b = imgData:getPixel(x, y+1)
-                if level_item(r, g, b, "block") then
-                    neighborhood = neighborhood + 1
-                end
-
-                -- now choose a specific placement configuration
-                local pc
-                
-                local linker_code
-            
-                if ( neighborhood == 1 or neighborhood == 13 ) then 
-
-                    pc = placement_configs.floor
-
-                    -- save linker code
-                    local r,g,b = imgData:getPixel(x, y-1)
-                    linker_code = r*256*256 + g*256 + b
-
-                elseif ( neighborhood == 2 or neighborhood == 14 ) then
-
-                    pc = placement_configs.ceil
-
-                    -- save linker code
-                    local r,g,b = imgData:getPixel(x, y+1)
-                    linker_code = r*256*256 + g*256 + b
-
-                elseif ( neighborhood == 4 or neighborhood == 7 ) then
-
-                    pc = placement_configs.lwall
-
-                    -- save linker code
-                    local r,g,b = imgData:getPixel(x+1, y)
-                    linker_code = r*256*256 + g*256 + b
-
-                elseif ( neighborhood == 8 or neighborhood == 11 ) then
-
-                    pc = placement_configs.rwall
-
-                    -- save linker code
-                    local r,g,b = imgData:getPixel(x-1, y)
-                    linker_code = r*256*256 + g*256 + b
-
-                else
-
-                    pc = placement_configs.floor
-
-                    -- save linker code
-                    local r,g,b = imgData:getPixel(x, y-1)
-                    linker_code = r*256*256 + g*256 + b
-
-                    print("Error: Invalid entity at ("..x..", "..y.."). Unable to resolve placement.")
-                end
+                -- get information concerning gameobject's orientation
+                local p_info = getPlacementInfo(imgData, x, y)
+                local pc = p_info.pc
+                local linker_code = p_info.linker_code
 
                 local emitter_body = love.physics.newBody(game.world, 10*phyUPP*x, 10*phyUPP*y, "static")
 
@@ -914,8 +939,8 @@ function game.loadLevel(lvl)
                 game.entities[#game.entities+1] = {
                     type = "emitter";
                     body = emitter_body;
+                    initial_state = initiated;
                     initiated = initiated;
-                    placement = pc;
                     linker_code = linker_code;
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
@@ -929,52 +954,57 @@ function game.loadLevel(lvl)
                             --         |
                             --
 
-                            -- Path starts just forward of emitter
-                            local laserPath = {
-                                {
-                                    x = pos.x + pc.beam_o.x + pc.beam_v.x;
-                                    y = pos.y + pc.beam_o.y + pc.beam_v.y
-                                },
-                                -- {
-                                --     x = pos.x + pc.beam_o.x + 10*pc.beam_v.x;
-                                --     y = pos.y + pc.beam_o.y + 10*pc.beam_v.y
-                                -- },
-                            }
-
-                            -- simulated particle to figure out laser path
-                            local simParticle = {
-                                x = pos.x + pc.beam_o.x + pc.beam_v.x;
-                                y = pos.y + pc.beam_o.y + pc.beam_v.y
-                            }
-
-                            -- move particle forward until it hits something
-                            -- (arbitrary 300px limit)
-                            for i=1,300 do
-                                simParticle.x = simParticle.x + pc.beam_v.x;
-                                simParticle.y = simParticle.y + pc.beam_v.y
-
-                                if getObjAtPoint(simParticle) then
-                                    break
-                                end
-                            end
-
-                            -- add deep copy of particle to laserPath
-                            laserPath[#laserPath+1] = {x=simParticle.x; y=simParticle.y}
-
-                            renderLaser(laserPath)
+                            castLaser(pos.x + pc.beam_o.x, pos.y + pc.beam_o.y, pc.beam_v.x, pc.beam_v.y)
                         end
                     end;
+                    -- An "ilaser" is one that starts on and gets turned off by the button
+                    -- A "ulaser" is one that starts off and gets turned on by the button
                     initiate = function(ent)
-                        print("Laser On")
-
-                        ent.initiated = true
+                        ent.initiated = not ent.initial_state
 
                     end;
                     deinitiate = function(ent)
-                        print("Laser Off")
-
-                        ent.initiated = false
+                        ent.initiated = ent.initial_state
                     end 
+                }
+
+            elseif level_item(r, g, b, "catcher") then
+                -- 
+                --     CATCHER DEFINITION
+                --         ______  
+                --        |/    \|
+                --        |      |
+                --        |_    _|    
+                --     \============/
+                --         
+
+                -- get information concerning gameobject's orientation
+                local p_info = getPlacementInfo(imgData, x, y)
+                local pc = p_info.pc
+                local linker_code = p_info.linker_code
+
+                local catcher_body = love.physics.newBody(game.world, 10*phyUPP*x, 10*phyUPP*y, "static")
+
+                local rect = pc.rect_transform(5.5, 7, 9, 6)
+                local catcher_shape = love.physics.newRectangleShape(rect.x*phyUPP, 
+                                                    rect.y*phyUPP, rect.w*phyUPP, rect.h*phyUPP)
+
+                local emitter_fixture = love.physics.newFixture(catcher_body, catcher_shape)
+                catcher_body:setFixedRotation(true)
+
+                game.entities[#game.entities+1] = {
+                    type = "catcher";
+                    body = catcher_body;
+
+                    linker_code = linker_code;
+
+                    render = function(ent)
+                        local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
+                        love.graphics.draw(sprites.catcher, pos.x + pc.x_offset, 
+                                            pos.y + pc.y_offset, pc.rotation)
+                    end;
+                    
+                    -- onReceiveLaser
                 }
 
             elseif level_item(r, g, b, "door") then
