@@ -14,9 +14,6 @@
 ----         DEFINITIONS
 ----
 
-
-
-
   ----------
  --          -  
 --   Notes    -   
@@ -26,7 +23,6 @@
  -- Design levels using image editors
  -- Add story-line triggers and effects in code
  -- Anticipating voice, text, and lighting effects
-
 
 -------------------------------            -------------------------------
 -----------------------------  1. IMPORTS    -----------------------------
@@ -69,14 +65,89 @@ local reach = 15
 -----------------------------     STATE      -----------------------------  
 -------------------------------            -------------------------------  
 
-
 local game = {
     blocks = {};
     entities = {}
 }
+
 -------------------------------            -------------------------------  
------------------------------   UTILITY      -----------------------------  
+-----------------------------    UTILITY     -----------------------------  
 -------------------------------            -------------------------------  
+
+function control_point(x, y, visual)
+
+    -- visual control point override
+    visual = false
+
+    local hot = false
+
+    if getObjAtPoint({x=x; y=y}, --[[ exclude_player ]] true) then
+        -- color control point red
+        love.graphics.setColor(1,0,0)
+        hot = true
+    else
+        -- color control point blue
+        love.graphics.setColor(0,0,1)
+    end
+
+    -- render control point
+    if (visual) then
+        love.graphics.rectangle("fill", x, y, 1, 1) 
+    end
+
+    -- restore default color
+    love.graphics.setColor(1,1,1)
+
+    return hot
+end
+
+function getObjAtPoint(screen_point, exclude_player)
+
+    local point = scrToPhy(screen_point.x, screen_point.y)
+
+    -- first check all blocks
+    for i,b in pairs(game.blocks) do
+
+        -- blocks are of type Body
+        for j,fix in pairs(b:getFixtures()) do
+            local s = fix:getShape()
+            if s:testPoint(b:getX(), b:getY(), 0, point.x, point.y) then
+
+                -- return pseudo-game object for block
+                return { type="block" ; body = b }
+
+                -- We treat blocks like game objects only when the laser interacts with it
+                -- to conserve memory.
+            end
+        end
+    end
+    
+    -- then check entities
+    for i,e in pairs(game.entities) do
+        local b = e.body
+        for j,fix in pairs(b:getFixtures()) do
+            local s = fix:getShape()
+            if s:testPoint(b:getX(), b:getY(), 0, point.x, point.y) then
+                return e
+            end
+        end
+    end
+
+    if exclude_player then
+        return nil
+    end
+
+    -- then check player
+    local b = game.player.body
+    for j,fix in pairs(b:getFixtures()) do
+        local s = fix:getShape()
+        if s:testPoint(b:getX(), b:getY(), 0, point.x, point.y) then
+            return game.player
+        end
+    end
+
+    return nil
+end
 
 function renderFixtures(b)
     love.graphics.setColor(0,0,1,.3)
@@ -85,7 +156,7 @@ function renderFixtures(b)
         for x=0,10 do
             for y=0,10 do
                 if s:testPoint( 0, 0, 0, (x+.5)*phyUPP, (y+.5)*phyUPP) then
-                local p = phyToScr(b:getX(), b:getY())
+                    local p = phyToScr(b:getX(), b:getY())
                     love.graphics.rectangle( 'fill', p.x+x, p.y+y, 1, 1 )
                 end
             end
@@ -98,10 +169,15 @@ end
 function renderLaser(path)
     love.graphics.setColor(0,0,0)
 
-    for i=0,100 do
-        f = i/100
-        love.graphics.rectangle( "fill", path[1].x + f*(path[2].x-path[1].x), path[1].y + f*(path[2].y-path[1].y), 1, 1)
+    if #path < 2 then
+        return
     end
+
+    love.graphics.line( path[1].x, path[1].y, path[2].x, path[2].y )
+    -- for i=0,100 do
+    --     f = i/100
+    --     love.graphics.rectangle( "fill", path[1].x + f*(path[2].x-path[1].x), path[1].y + f*(path[2].y-path[1].y), 1, 1)
+    -- end
 
     love.graphics.setColor(1,1,1)
 end
@@ -110,6 +186,13 @@ function phyToScr(px,py)
     return {
         x = px/phyUPP-game.player.body:getX()/phyUPP+playerScrnX();
         y = py/phyUPP-game.player.body:getY()/phyUPP+playerScrnY()
+    }
+end
+
+function scrToPhy(sx,sy) 
+    return {
+        x = (sx - playerScrnX() + game.player.body:getX()/phyUPP) * phyUPP;
+        y = (sy - playerScrnY() + game.player.body:getY()/phyUPP) * phyUPP
     }
 end
 
@@ -164,7 +247,7 @@ end
 -----------------------------     EVENTS     -----------------------------  
 -------------------------------            -------------------------------  
 
-function game.draw()
+function game.draw(dt)
     love.graphics.scale(texUPP, texUPP)
 
     -- BLOCK RENDERER
@@ -184,7 +267,12 @@ function game.draw()
 end
 
 function game.input(dt)
-    game.player.input()
+    if game.player.input then 
+        game.player.input()
+    else
+        print("Error: Map does not include player spawn point.")
+    end
+    game.player.t = game.player.t + dt
 end
 
 function game.update(dt)
@@ -213,14 +301,20 @@ function game.init()
     -- main collider
     local player_shape = love.physics.newRectangleShape(5.5*phyUPP, 5.5*phyUPP, 5*phyUPP, 11*phyUPP)
     local player_fixture = love.physics.newFixture(player_body, player_shape)
+    -- set player feet to have high friction
+    player_fixture:setFriction(2)
 
     -- extra collider for arms
     local player_shape2 = love.physics.newRectangleShape(5.5*phyUPP, 5*phyUPP, 7*phyUPP, 2*phyUPP)
     local player_fixture2 = love.physics.newFixture(player_body, player_shape2)
 
     player_body:setFixedRotation(true)
-    game.player = {}
-    game.player.body = player_body
+    -- PLAYER PROPERTIES
+    game.player = {
+        body = player_body;
+        t = 0;
+        type = "player"
+    }
 
 end
 
@@ -331,6 +425,12 @@ function game.loadLevel(lvl)
                 -- and also, set up a rendering function here
                 game.player.render = function()
                     
+
+                    ------------------------------------------------
+                    --                                            --
+                    --   HELD-ITEM ACTION                         --
+                    --                                            --
+                    ------------------------------------------------
                     -- TODO this is more "action-loop" type code, you may want to organize it that way
                     if game.player.helditem then
 
@@ -348,17 +448,61 @@ function game.loadLevel(lvl)
 
                     end
 
-                    -- draw player
+                    ------------------------------------------------
+                    --                                            --
+                    --   RENDER PLAYER                            --
+                    --                                            --
+                    ------------------------------------------------
+                    local spr = sprites.player
+
+                    vx, vy = game.player.body:getLinearVelocity( )
+                    vxa = math.abs(vx)
+
+                    -- if player is moving faster than a crawl (and on the ground)
+                    if vxa > 4 and game.player.isGrounded then
+                        local anim_dur = .3
+                        if game.player.t % anim_dur > anim_dur/2 then
+                            spr = sprites.player_2
+                        end
+                    end
+
                     if game.player.direction == "right" then
-                        love.graphics.draw(sprites.player, playerScrnX()+11, playerScrnY(), 0, -1, 1) 
+                        love.graphics.draw(spr, playerScrnX()+11, playerScrnY(), 0, -1, 1) 
                     else
-                        love.graphics.draw(sprites.player, playerScrnX(), playerScrnY(), 0, 1, 1) 
+                        love.graphics.draw(spr, playerScrnX(), playerScrnY(), 0, 1, 1) 
+                    end
+
+                    ------------------------------------------------
+                    --                                            --
+                    --   RENDER COLLIDERS (DEBUG)                 --
+                    --                                            --
+                    ------------------------------------------------
+                    local renderColliders = false
+
+                    -- full entity collider debug
+                    if renderColliders then
+                        for i,e in pairs(game.entities) do
+                            renderFixtures(e.body)
+                        end
                     end
 
                     -- full entity collider debug
-                    -- for i,e in pairs(game.entities) do
-                    --     renderFixtures(e.body)
-                    -- end
+                    if renderColliders then
+                        for i,b in pairs(game.blocks) do
+                            renderFixtures(b)
+                        end
+                    end
+
+                    -- player collider debug
+                    if renderColliders then
+                        renderFixtures(game.player.body)
+                    end
+
+                    ------------------------------------------------
+                    --                                            --
+                    --   RENDER TEXT                              --
+                    --                                            --
+                    ------------------------------------------------
 
                     -- draw rectangle to put text in
                     love.graphics.setColor(0, 0, 0)
@@ -370,9 +514,40 @@ function game.loadLevel(lvl)
                     love.graphics.setColor(0, 0, 0)
                     love.graphics.print("Welcome to this untitled Game.", 1, 0, 0, .4)
                     love.graphics.setColor(1, 1, 1)
+
+
+                    ------------------------------------------------
+                    --                                            --
+                    --   RENDER CONTROL POINTS (DEBUG)            --
+                    --                                            --
+                    ------------------------------------------------
+
+                    -- is player grounded?
+                    game.player.isGrounded = nil or
+                        -- ground under feet
+                        control_point(playerScrnX()+5, playerScrnY()+12, --[[ visual ]] true) or
+                        -- ground under left arm
+                        control_point(playerScrnX()+2, playerScrnY()+7, --[[ visual ]] true) or 
+                        -- ground under right arm
+                        control_point(playerScrnX()+9, playerScrnY()+7, --[[ visual ]] true)
+
+
+                    -- if either of these is active, disable climbing
+                    game.player.noClimb = nil or
+                        control_point(playerScrnX()+1, playerScrnY()+2, --[[ visual ]] true) or
+                        control_point(playerScrnX()+10, playerScrnY()+2, --[[ visual ]] true)
+
                 end
                 
+                ------------------------------------------------
+                --                                            --
+                --   PLAYER INPUT                             --
+                --                                            --
+                ------------------------------------------------
+
                 game.player.keydown = function(key, scode)
+
+                    -- E to pick up / activate items
 
                     if key == "e" then
 
@@ -400,22 +575,79 @@ function game.loadLevel(lvl)
                     end
                 end
 
-                -- immediate mode input handling
+                -- Player movement
+
                 game.player.input = function()
 
-                    if love.keyboard.isDown("right") or love.keyboard.isDown("d") then
-                        game.player.body:applyForce(50000,0)
-                        game.player.direction = "right"
+                    local moveLeft = love.keyboard.isDown("left") or love.keyboard.isDown("a")
+                    local moveRight = love.keyboard.isDown("right") or love.keyboard.isDown("d")
+
+                    local velX, velY = game.player.body:getLinearVelocity()
+
+                    local maxVel
+
+                    -- ground speed vs air speed
+                    if game.player.isGrounded then
+                        maxVel = 1000
+                    else
+                        maxVel = 300
                     end
-                    if love.keyboard.isDown("left") or love.keyboard.isDown("a") then
-                        game.player.body:applyForce(-50000,0)
+
+                    -- apply force in direction of arrow keys
+
+                    if moveLeft then
                         game.player.direction = "left"
+
+                        if math.abs(velX) < maxVel then
+                            game.player.body:applyForce(-50000,0)
+                        end
                     end
-                    if love.keyboard.isDown("up") or love.keyboard.isDown("w") then
+
+                    if moveRight then
+                        game.player.direction = "right"
+
+                        if math.abs(velX) < maxVel then
+                            game.player.body:applyForce(50000,0)
+                        end
+                    end
+
+                    -- patch clipping and enable climbing
+                    if moveLeft or moveRight then
+                        local currY = game.player.body:getY()
+
+                        -- note: noClimb is set in the control points section
+                        --       whenever an obstacle is too tall for the player
+                        --       to climb
+
+                        if not game.player.noClimb then
+                            if math.abs(velX) < 3 then
+                                -- if x vel is crawling, climb up
+                                game.player.body:setY( currY - 3 )
+                            else
+                                -- if x vel is fast, just hover slightly (to prevent clipping)
+                                game.player.body:setY( currY - 1 )
+                            end
+                        end
+
+                        -- note: this patch works by hovering the player slightly whenever he walks
+                        --       this causes the ground to look like it is vibrating slightly
+                        --       but it keeps the player from getting stuck (because of overlapping 
+                        --       colliders)
+
+                        -- note: this is also a partial implementation of the climbing behavior
+                        --       I will use a pair of control points to disallow climbing a certain 
+                        --       height
+                    end
+
+                    if (love.keyboard.isDown("up") or love.keyboard.isDown("w"))
+                            and game.player.isGrounded then
+
                         game.player.body:applyForce(0,-50000)
+
                     end
 
                 end
+                
             elseif level_item(r, g, b, "cube") then
                 local cube_body = love.physics.newBody(game.world, 10*phyUPP*x, 10*phyUPP*y, "dynamic")
                 local cube_shape = love.physics.newRectangleShape(5*phyUPP, 7.5*phyUPP, 10*phyUPP, 7*phyUPP)
@@ -498,7 +730,13 @@ function game.loadLevel(lvl)
                             for i,e in pairs(game.entities) do
                                 -- found something other than self with same linker code
                                 if self.linker_code == e.linker_code and self ~= e then
-                                    if (e.initiate) then e.initiate(e) end
+
+                                    -- initiate functions take args like this:
+                                    -- initiate( entity_to_initiate, entity_causing_initiation )
+
+                                    -- and deinitiate is the same
+
+                                    if (e.initiate) then e.initiate(e, self) end
                                 end
                             end
                         end
@@ -516,7 +754,7 @@ function game.loadLevel(lvl)
                             for i,e in pairs(game.entities) do
                                 -- found something other than self with same linker code
                                 if self.linker_code == e.linker_code and self ~= e then
-                                    if (e.deinitiate) then e.deinitiate(e) end
+                                    if (e.deinitiate) then e.deinitiate(e, self) end
                                 end
                             end
                         end
@@ -678,6 +916,7 @@ function game.loadLevel(lvl)
                     body = emitter_body;
                     initiated = initiated;
                     placement = pc;
+                    linker_code = linker_code;
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
                         love.graphics.draw(sprites.emitter, pos.x + pc.x_offset, 
@@ -690,19 +929,52 @@ function game.loadLevel(lvl)
                             --         |
                             --
 
-                            -- render about 10 pix forward and that's all
-                            renderLaser({
-                                            {
-                                                x = pos.x + pc.beam_o.x + pc.beam_v.x;
-                                                y = pos.y + pc.beam_o.y + pc.beam_v.y
-                                            },
-                                            {
-                                                x = pos.x + pc.beam_o.x + 10*pc.beam_v.x;
-                                                y = pos.y + pc.beam_o.y + 10*pc.beam_v.y
-                                            },
-                                        })
+                            -- Path starts just forward of emitter
+                            local laserPath = {
+                                {
+                                    x = pos.x + pc.beam_o.x + pc.beam_v.x;
+                                    y = pos.y + pc.beam_o.y + pc.beam_v.y
+                                },
+                                -- {
+                                --     x = pos.x + pc.beam_o.x + 10*pc.beam_v.x;
+                                --     y = pos.y + pc.beam_o.y + 10*pc.beam_v.y
+                                -- },
+                            }
+
+                            -- simulated particle to figure out laser path
+                            local simParticle = {
+                                x = pos.x + pc.beam_o.x + pc.beam_v.x;
+                                y = pos.y + pc.beam_o.y + pc.beam_v.y
+                            }
+
+                            -- move particle forward until it hits something
+                            -- (arbitrary 300px limit)
+                            for i=1,300 do
+                                simParticle.x = simParticle.x + pc.beam_v.x;
+                                simParticle.y = simParticle.y + pc.beam_v.y
+
+                                if getObjAtPoint(simParticle) then
+                                    break
+                                end
+                            end
+
+                            -- add deep copy of particle to laserPath
+                            laserPath[#laserPath+1] = {x=simParticle.x; y=simParticle.y}
+
+                            renderLaser(laserPath)
                         end
-                    end
+                    end;
+                    initiate = function(ent)
+                        print("Laser On")
+
+                        ent.initiated = true
+
+                    end;
+                    deinitiate = function(ent)
+                        print("Laser Off")
+
+                        ent.initiated = false
+                    end 
                 }
 
             elseif level_item(r, g, b, "door") then
@@ -735,14 +1007,14 @@ function game.loadLevel(lvl)
                 local linker_code = r*256*256 + g*256 + b
 
                 game.entities[#game.entities+1] = {
-                    type = "unknown";
+                    type = "door";
                     body = obj_body;
                     linker_code = linker_code;
                     -- initiated means "activated" or "open"
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
 
-                        if ent.open then
+                        if ent.initiated then
                             
                             -- draw the door open-like
 
@@ -764,7 +1036,7 @@ function game.loadLevel(lvl)
                         end
 
                         -- let the renderer know to draw door open
-                        ent.open = true
+                        ent.initiated = true
                     end;
                     deinitiate = function(ent)
                         print("Door close")
@@ -775,7 +1047,7 @@ function game.loadLevel(lvl)
                         end
 
                         -- let the renderer know to draw door closed
-                        ent.open = false
+                        ent.initiated = false
                     end
                 }
             elseif not level_item(r, g, b, "empty") then
