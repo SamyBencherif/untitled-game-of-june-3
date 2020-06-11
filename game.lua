@@ -74,6 +74,25 @@ local game = {
 -----------------------------    UTILITY     -----------------------------  
 -------------------------------            -------------------------------  
 
+function setLCActive(lc, state)
+    for i,e in pairs(game.entities) do
+        -- found something other than self with same linker code
+        if lc == e.linker_code then
+
+            -- initiate functions take args like this:
+            -- initiate( entity_to_initiate, entity_causing_initiation )
+
+            -- and deinitiate is the same
+
+            if state then
+                if (e.initiate) then e.initiate(e) end
+            else
+                if (e.deinitiate) then e.deinitiate(e) end
+            end
+        end
+    end
+end
+
 function castLaser(sx,sy,dx,dy)
     -- simulated particle to figure out laser segment
     local simParticle = {
@@ -81,13 +100,16 @@ function castLaser(sx,sy,dx,dy)
         y = sy + dy;
     }
 
+    local foundObj
+
     -- move particle forward until it hits something
     -- (arbitrary 300px limit)
     for i=1,300 do
         simParticle.x = simParticle.x + dx
         simParticle.y = simParticle.y + dy
 
-        if getObjAtPoint(simParticle) then
+        foundObj = getObjAtPoint(simParticle)
+        if foundObj then
             break
         end
     end
@@ -98,6 +120,12 @@ function castLaser(sx,sy,dx,dy)
         simParticle.x,
         simParticle.y
     )
+
+    -- call onReceiveLaser event if the object has it
+    if foundObj.onReceiveLaser then
+        foundObj.onReceiveLaser(foundObj, simParticle, {dx=dx; dy=dy})
+    end
+
 end
 
 function getPlacementInfo(imgData, x, y)
@@ -243,7 +271,7 @@ function control_point(x, y, visual)
     end
 
     -- render control point
-    if (visual) then
+    if visual then
         love.graphics.rectangle("fill", x, y, 1, 1) 
     end
 
@@ -709,7 +737,6 @@ function game.loadLevel(lvl)
                                      game.player.body:getY())/phyUPP <= reach then
 
                                 game.player.helditem = e
-                                print("Picked up item "..e.type)
 
                                 return
 
@@ -796,6 +823,7 @@ function game.loadLevel(lvl)
                 local cube_shape = love.physics.newRectangleShape(5*phyUPP, 7.5*phyUPP, 10*phyUPP, 7*phyUPP)
                 local cube_fixture = love.physics.newFixture(cube_body, cube_shape)
                 cube_body:setFixedRotation(true)
+                cube_body:setSleepingAllowed(false)
                 --         
                 --     CUBE DEFINITION
                 --          ______
@@ -813,7 +841,11 @@ function game.loadLevel(lvl)
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
                         love.graphics.draw(ent.sprite, pos.x, pos.y)
-                    end       
+                    end;
+                    onReceiveLaser = function(ent, point, deltas)
+                        local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
+                        castLaser(pos.x-3, pos.y+7, -1, 0)
+                    end
                 }
             elseif level_item(r, g, b, "button") then
                 --
@@ -865,23 +897,10 @@ function game.loadLevel(lvl)
 
                         self.push_count = self.push_count + 1
 
-                        print("Button pushed")
-                        
                         -- only trigger when btn is first pushed down
                         -- (for example player and cube on button should only result in one trigger)
                         if (self.push_count == 1) then
-                            for i,e in pairs(game.entities) do
-                                -- found something other than self with same linker code
-                                if self.linker_code == e.linker_code and self ~= e then
-
-                                    -- initiate functions take args like this:
-                                    -- initiate( entity_to_initiate, entity_causing_initiation )
-
-                                    -- and deinitiate is the same
-
-                                    if (e.initiate) then e.initiate(e, self) end
-                                end
-                            end
+                            setLCActive(self.linker_code, true)
                         end
 
                     end;
@@ -894,12 +913,7 @@ function game.loadLevel(lvl)
                         if (self.push_count == 0) then
                             self.sprite = sprites.button
 
-                            for i,e in pairs(game.entities) do
-                                -- found something other than self with same linker code
-                                if self.linker_code == e.linker_code and self ~= e then
-                                    if (e.deinitiate) then e.deinitiate(e, self) end
-                                end
-                            end
+                            setLCActive(self.linker_code, false)
                         end
 
                     end
@@ -957,11 +971,11 @@ function game.loadLevel(lvl)
                             castLaser(pos.x + pc.beam_o.x, pos.y + pc.beam_o.y, pc.beam_v.x, pc.beam_v.y)
                         end
                     end;
+
                     -- An "ilaser" is one that starts on and gets turned off by the button
                     -- A "ulaser" is one that starts off and gets turned on by the button
                     initiate = function(ent)
                         ent.initiated = not ent.initial_state
-
                     end;
                     deinitiate = function(ent)
                         ent.initiated = ent.initial_state
@@ -997,14 +1011,32 @@ function game.loadLevel(lvl)
                     body = catcher_body;
 
                     linker_code = linker_code;
+                    sprite = sprites.catcher;
+
+                    framesWithoutLaser = 2;
 
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
-                        love.graphics.draw(sprites.catcher, pos.x + pc.x_offset, 
+                        love.graphics.draw(ent.sprite, pos.x + pc.x_offset, 
                                             pos.y + pc.y_offset, pc.rotation)
+
+                        if ent.framesWithoutLaser == 1 then
+                            ent.onLostLaser(ent)
+                        end
+
+                        ent.framesWithoutLaser = ent.framesWithoutLaser + 1
                     end;
                     
-                    -- onReceiveLaser
+                    onLostLaser = function(ent)
+                        ent.sprite = sprites.catcher
+                        setLCActive(ent.linker_code, false)
+                    end;
+
+                    onReceiveLaser = function(ent, collisionPoint, beamDirection)
+                        ent.sprite = sprites.catcher_active
+                        setLCActive(ent.linker_code, true)
+                        ent.framesWithoutLaser = 0
+                    end
                 }
 
             elseif level_item(r, g, b, "door") then
@@ -1058,8 +1090,6 @@ function game.loadLevel(lvl)
 
                     end;
                     initiate = function(ent)
-                        print("Door open")
-
                         -- disable the door's collider
                         for i,f in pairs(ent.body:getFixtures()) do
                             f:setSensor(true)
@@ -1069,7 +1099,6 @@ function game.loadLevel(lvl)
                         ent.initiated = true
                     end;
                     deinitiate = function(ent)
-                        print("Door close")
 
                         -- enable the door's collider
                         for i,f in pairs(ent.body:getFixtures()) do
