@@ -380,6 +380,7 @@ function level_item(r, g, b, name)
     if r == 0 and g == 0 and b == 0 and name == "block" then return true end
     if r == 235 and g == 226 and b == 20 and name == "player" then return true end
     if r == 45 and g == 49 and b == 204 and name == "cube" then return true end
+    if r == 20 and g == 35 and b == 133 and name == "sphere" then return true end
     if r == 204 and g == 154 and b == 45 and name == "button" then return true end
     if r == 141 and g == 40 and b == 40 and name == "ulaser" then return true end
     if r == 233 and g == 34 and b == 75 and name == "ilaser" then return true end
@@ -648,7 +649,7 @@ function game.loadLevel(lvl)
                     --   RENDER COLLIDERS (DEBUG)                 --
                     --                                            --
                     ------------------------------------------------
-                    local renderColliders = false
+                    local renderColliders = true
 
                     -- full entity collider debug
                     if renderColliders then
@@ -718,11 +719,12 @@ function game.loadLevel(lvl)
 
                 game.player.keydown = function(key, scode)
 
-                    -- E to pick up / activate items
+                    local helditem = game.player.helditem
 
+                    -- E to pick up / activate items
                     if key == "e" then
 
-                        if game.player.helditem then
+                        if helditem then
                             game.player.helditem = nil
                             return
                         end
@@ -742,8 +744,16 @@ function game.loadLevel(lvl)
 
                             end
                         end
+                    elseif key == "q" then
+                        if helditem then
+                            if helditem.setDirection then
+                                local newAngle = helditem.angle + 1
+                                helditem.setDirection(helditem, newAngle)
+                            end
+                        end
                     end
-                end
+
+                end -- (keydown)
 
                 -- Player movement
 
@@ -845,6 +855,75 @@ function game.loadLevel(lvl)
                     onReceiveLaser = function(ent, point, deltas)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
                         castLaser(pos.x-3, pos.y+7, -1, 0)
+                    end
+                }
+            elseif level_item(r, g, b, "sphere") then
+                local sphere_body = love.physics.newBody(game.world, 10*phyUPP*x, 10*phyUPP*y, "dynamic")
+                local sphere_shape = love.physics.newRectangleShape(5.5*phyUPP, 4.5*phyUPP, 7*phyUPP, 9*phyUPP)
+                local sphere_fixture = love.physics.newFixture(sphere_body, sphere_shape)
+                sphere_body:setFixedRotation(true)
+                sphere_body:setSleepingAllowed(false)
+                --         
+                --     SPHERE DEFINITION
+                --                 
+                --          ||   
+                --         _||_ 
+                --        / _| \
+                --       | |_|  |
+                --        \|___/ 
+                --
+                game.entities[#game.entities+1] = {
+                    type = "sphere";
+                    pickupable = true;
+                    body = sphere_body;
+                    sprite = sprites.sphere;
+                    renderAngle = 0;
+                    renderOffset = {x=0; y=0};
+                    angle = 0; -- 4*radians/pi (ie 0 is 0deg, 1 is 45deg, 2 is 90deg, etc)
+                    render = function(ent)
+                        local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
+                        local o = ent.renderOffset
+                        love.graphics.draw(ent.sprite, pos.x+o.x*11, pos.y+o.y*11, ent.renderAngle)
+                    end;
+                    onReceiveLaser = function(ent, point, deltas)
+                        local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
+                        castLaser(pos.x-3, pos.y+7, -1, 0)
+                    end;
+                    setDirection = function(ent, angle)
+                        angle = angle % 8
+                        
+                        -- set the box collider
+
+                        -- set render offset
+                        -- ANGLE(S) |  OFFSET 
+                        -- -------------------
+                        -- 0, 1    =>  (0,0)
+                        -- 2, 3    =>  (1,0)
+                        -- 4, 5    =>  (1,1)
+                        -- 6, 7    =>  (0,1)
+                        local offsetTableX = {0,0,1,1,1,1,0,0}
+                        local offsetTableY = {0,0,0,0,1,1,1,1}
+                        ent.renderOffset = {
+                            x = offsetTableX[angle+1];
+                            y = offsetTableY[angle+1]
+                        }
+
+                        -- set render angle
+                        ent.renderAngle = math.floor(angle / 2) * math.pi / 2
+
+                        -- set the sprite
+                        if angle % 2 == 1 then
+                            ent.sprite = sprites.sphere_d
+                        else
+                            ent.sprite = sprites.sphere
+                        end
+
+                        -- set cast origin
+
+                        -- set cast delta
+
+                        -- set the angle
+                        ent.angle = angle
                     end
                 }
             elseif level_item(r, g, b, "button") then
