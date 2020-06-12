@@ -61,6 +61,8 @@ local gravity = 1000
 -- reach distance in tex pix
 local reach = 15
 
+local default_bounce_count = 10
+
 -------------------------------            -------------------------------  
 -----------------------------     STATE      -----------------------------  
 -------------------------------            -------------------------------  
@@ -93,7 +95,7 @@ function setLCActive(lc, state)
     end
 end
 
-function castLaser(sx,sy,dx,dy)
+function castLaser(sx,sy,dx,dy,remainingBounces)
     -- simulated particle to figure out laser segment
     local simParticle = {
         x = sx + dx;
@@ -122,8 +124,8 @@ function castLaser(sx,sy,dx,dy)
     )
 
     -- call onReceiveLaser event if the object has it
-    if foundObj.onReceiveLaser then
-        foundObj.onReceiveLaser(foundObj, simParticle, {dx=dx; dy=dy})
+    if foundObj.onReceiveLaser and remainingBounces > 0 then
+        foundObj.onReceiveLaser(foundObj, simParticle, {dx=dx; dy=dy}, remainingBounces)
     end
 
 end
@@ -465,6 +467,7 @@ function game.init()
     love.draw = game.draw
     love.update = game.update
     love.keypressed = game.keypressed
+    love.keyreleased = game.keyreleased
 
     -- create player
     -- PLAYER DEFINITION (partial)
@@ -490,9 +493,20 @@ function game.init()
 
 end
 
-function game.keypressed(key, scancode, isrepeat )
+function game.keypressed(key, scancode, isrepeat)
     if isrepeat then return end
-    game.player.keydown(key, scode)
+
+    if key == "lshift" then
+        game.player.shiftHeld = true
+    end
+
+    game.player.keydown(key, scancode)
+end
+
+function game.keyreleased(key, scancode)
+    if key == "lshift" then
+        game.player.shiftHeld = false
+    end
 end
 
 -- if there is a collideEnter handler, call it
@@ -649,7 +663,7 @@ function game.loadLevel(lvl)
                     --   RENDER COLLIDERS (DEBUG)                 --
                     --                                            --
                     ------------------------------------------------
-                    local renderColliders = true
+                    local renderColliders = false
 
                     -- full entity collider debug
                     if renderColliders then
@@ -744,13 +758,16 @@ function game.loadLevel(lvl)
 
                             end
                         end
-                    elseif key == "q" then
-                        if helditem then
-                            if helditem.setDirection then
-                                local newAngle = helditem.angle + 1
-                                helditem.setDirection(helditem, newAngle)
-                            end
+                    elseif key == "q" and helditem and helditem.setDirection then
+                        local newAngle
+
+                        if game.player.shiftHeld then
+                            newAngle = helditem.angle - 1
+                        else
+                            newAngle = helditem.angle + 1
                         end
+
+                        helditem.setDirection(helditem, newAngle)
                     end
 
                 end -- (keydown)
@@ -852,9 +869,9 @@ function game.loadLevel(lvl)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
                         love.graphics.draw(ent.sprite, pos.x, pos.y)
                     end;
-                    onReceiveLaser = function(ent, point, deltas)
+                    onReceiveLaser = function(ent, point, deltas, remainingBounces)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
-                        castLaser(pos.x-3, pos.y+7, -1, 0)
+                        castLaser(pos.x-3, pos.y+7, -1, 0, remaingBounces-1)
                     end
                 }
             elseif level_item(r, g, b, "sphere") then
@@ -879,20 +896,52 @@ function game.loadLevel(lvl)
                     sprite = sprites.sphere;
                     renderAngle = 0;
                     renderOffset = {x=0; y=0};
+                    castDelta = {x=0, y=-1};
+                    castOrigin = {x=5.5; y=1};
+                    fixture = sphere_fixture;
                     angle = 0; -- 4*radians/pi (ie 0 is 0deg, 1 is 45deg, 2 is 90deg, etc)
                     render = function(ent)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
                         local o = ent.renderOffset
                         love.graphics.draw(ent.sprite, pos.x+o.x*11, pos.y+o.y*11, ent.renderAngle)
                     end;
-                    onReceiveLaser = function(ent, point, deltas)
+                    onReceiveLaser = function(ent, point, deltas, remainingBounces)
                         local pos = phyToScr(ent.body:getX(), ent.body:getY()) 
-                        castLaser(pos.x-3, pos.y+7, -1, 0)
+                        castLaser(
+                            pos.x + ent.castOrigin.x, 
+                            pos.y + ent.castOrigin.y, 
+                            ent.castDelta.x, 
+                            ent.castDelta.y, 
+                            remainingBounces-1
+                        )
                     end;
                     setDirection = function(ent, angle)
                         angle = angle % 8
                         
                         -- set the box collider
+                        -- ANGLE(S)  |  X  |  Y  |  W  |  H
+                        -- -----------------------------------
+                        --        0    5.5   4.5    7     9
+                        --        1     6     ?     8     ?
+                        --        2    6.5    ?     9     ?
+                        local boxTable = {
+                            {5.5,4.5,7,9},  -- 0
+                            {6.0,5.0,8,8},  -- 1
+                            {6.5,5.5,9,7},  -- 2
+                            {6.0,6.0,8,8},  -- 3
+                            {5.5,6.5,7,9},  -- 4
+                            {5.0,6.0,8,8},  -- 5
+                            {4.5,5.5,9,7},  -- 6
+                            {5.0,5.0,8,8},  -- 7
+                        }
+                        ent.fixture:destroy()
+                        local sphere_shape = love.physics.newRectangleShape(
+                            boxTable[angle+1][1]*phyUPP,
+                            boxTable[angle+1][2]*phyUPP, 
+                            boxTable[angle+1][3]*phyUPP,
+                            boxTable[angle+1][4]*phyUPP
+                        )
+                        ent.fixture = love.physics.newFixture(ent.body, sphere_shape)
 
                         -- set render offset
                         -- ANGLE(S) |  OFFSET 
@@ -919,8 +968,30 @@ function game.loadLevel(lvl)
                         end
 
                         -- set cast origin
+                        local castOriginTable = {
+                            {x=5.5; y=1  };  -- 0
+                            {x=9.5; y=2  };  -- 1
+                            {x=10 ; y=5.5};  -- 2
+                            {x=9.5; y=9  };  -- 3
+                            {x=5.5; y=10 };  -- 4
+                            {x=1.5; y=9  };  -- 5
+                            {x=1  ; y=5.5};  -- 6
+                            {x=1.5; y=2  };  -- 7
+                        }
+                        ent.castOrigin = castOriginTable[angle+1]
 
                         -- set cast delta
+                        local castDeltaTable = {
+                            {x=0;y=-1};
+                            {x=1;y=-1};
+                            {x=1;y=0};
+                            {x=1;y=1};
+                            {x=0;y=1};
+                            {x=-1;y=1};
+                            {x=-1;y=0};
+                            {x=-1;y=-1};
+                        }
+                        ent.castDelta = castDeltaTable[angle+1]
 
                         -- set the angle
                         ent.angle = angle
@@ -1047,7 +1118,13 @@ function game.loadLevel(lvl)
                             --         |
                             --
 
-                            castLaser(pos.x + pc.beam_o.x, pos.y + pc.beam_o.y, pc.beam_v.x, pc.beam_v.y)
+                            castLaser(
+                                pos.x + pc.beam_o.x, 
+                                pos.y + pc.beam_o.y, 
+                                pc.beam_v.x, 
+                                pc.beam_v.y, 
+                                default_bounce_count
+                            )
                         end
                     end;
 
@@ -1111,7 +1188,7 @@ function game.loadLevel(lvl)
                         setLCActive(ent.linker_code, false)
                     end;
 
-                    onReceiveLaser = function(ent, collisionPoint, beamDirection)
+                    onReceiveLaser = function(ent, collisionPoint, beamDirection, remainingBounces)
                         ent.sprite = sprites.catcher_active
                         setLCActive(ent.linker_code, true)
                         ent.framesWithoutLaser = 0
